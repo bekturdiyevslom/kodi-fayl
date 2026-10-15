@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kodli fayl almashish</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b2430; --mute:#6b7683; --line:#dde2e8; --main:#1f6feb; --bad:#c62828; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12161c; --card:#1b212a; --ink:#e8ecf1; --mute:#93a0ae; --line:#2b3440; --main:#4c8dff; --bad:#ef5350; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width:560px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:22px; margin:8px 0 4px; }
+  p.sub { margin:0 0 18px; color:var(--mute); font-size:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:14px; }
+  label { display:block; font-size:14px; color:var(--mute); margin-bottom:6px; }
+  input[type=text] { width:100%; padding:12px; font-size:18px; letter-spacing:1px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); }
+  input[type=text]:focus, button:focus-visible { outline:2px solid var(--main); outline-offset:1px; }
+  .row { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  button { font:inherit; padding:10px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
+  button.main { background:var(--main); border-color:var(--main); color:#fff; flex:1; }
+  button.del { color:var(--bad); padding:6px 10px; }
+  .file { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--line); }
+  .file:first-child { border-top:0; }
+  .file a { flex:1; min-width:0; color:var(--main); text-decoration:none; word-break:break-all; }
+  .file small { color:var(--mute); white-space:nowrap; }
+  .bar { height:6px; background:var(--line); border-radius:3px; overflow:hidden; margin-top:6px; }
+  .bar i { display:block; height:100%; width:0; background:var(--main); }
+  #msg { font-size:14px; color:var(--mute); min-height:20px; }
+  .err { color:var(--bad) !important; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kodli fayl almashish</h1>
+  <p class="sub">Ro'yxatdan o'tish shart emas. Bir xil kodni kiritgan har qanday qurilma fayllarni ko'radi. Fayllar 24 soatdan keyin o'chadi.</p>
+
+  <section class="card" id="login">
+    <label for="code">Kod (kamida 4 ta belgi)</label>
+    <input type="text" id="code" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="row">
+      <button class="main" id="enter">Kirish</button>
+      <button id="gen">Yangi kod yaratish</button>
+    </div>
+  </section>
+
+  <section id="panel" hidden>
+    <div class="card">
+      <label>Joriy kod: <b id="cur" style="color:var(--ink)"></b></label>
+      <input type="file" id="files" multiple>
+      <div class="row">
+        <button class="main" id="up">Yuklash</button>
+        <button id="refresh">Yangilash</button>
+        <button id="exit">Chiqish</button>
+      </div>
+      <div class="bar" id="barwrap" hidden><i id="bar"></i></div>
+    </div>
+    <div class="card" id="list"></div>
+  </section>
+
+  <div id="msg"></div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let code = '';
+
+function say(t, bad) { const m = $('#msg'); m.textContent = t || ''; m.className = bad ? 'err' : ''; }
+function fmt(b) { return b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB'; }
+const q = (p, n) => p + '?c=' + encodeURIComponent(code) + (n ? '&n=' + encodeURIComponent(n) : '');
+
+$('#gen').onclick = () => {
+  const a = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let s = '';
+  for (const x of crypto.getRandomValues(new Uint8Array(8))) s += a[x % a.length];
+  $('#code').value = s;
+};
+
+function enter() {
+  const c = $('#code').value.trim();
+  if (c.length < 4) return say('Kod kamida 4 ta belgidan iborat bo\'lsin', true);
+  code = c;
+  location.hash = encodeURIComponent(c);
+  $('#login').hidden = true;
+  $('#panel').hidden = false;
+  $('#cur').textContent = c;
+  say('');
+  load();
+}
+$('#enter').onclick = enter;
+$('#code').onkeydown = e => { if (e.key === 'Enter') enter(); };
+$('#exit').onclick = () => { code = ''; history.replaceState(null, '', location.pathname); $('#panel').hidden = true; $('#login').hidden = false; $('#code').value = ''; say(''); };
+$('#refresh').onclick = load;
+
+async function load() {
+  try {
+    const r = await fetch(q('/api/list'));
+    if (!r.ok) throw new Error(await r.text());
+    render(await r.json());
+  } catch (e) { say('Ro\'yxatni olib bo\'lmadi: ' + e.message, true); }
+}
+
+function render(items) {
+  const box = $('#list');
+  box.textContent = '';
+  if (!items.length) { box.textContent = 'Hozircha fayl yo\'q. Yuqoridan fayl tanlab yuklang.'; return; }
+  for (const it of items) {
+    const row = document.createElement('div'); row.className = 'file';
+    const a = document.createElement('a'); a.href = q('/api/get', it.name); a.textContent = it.name; a.setAttribute('download', it.name);
+    const sz = document.createElement('small'); sz.textContent = fmt(it.size);
+    const b = document.createElement('button'); b.className = 'del'; b.textContent = 'O\'chirish';
+    b.onclick = async () => { if (confirm('"' + it.name + '" o\'chirilsinmi?')) { await fetch(q('/api/del', it.name), { method: 'DELETE' }); load(); } };
+    row.append(a, sz, b);
+    box.append(row);
+  }
+}
+
+function put(file, onp) {
+  return new Promise((ok, no) => {
+    const x = new XMLHttpRequest();
+    x.open('PUT', q('/api/up', file.name));
+    x.upload.onprogress = e => e.lengthComputable && onp(e.loaded / e.total);
+    x.onload = () => x.status === 200 ? ok() : no(new Error(x.responseText || x.status));
+    x.onerror = () => no(new Error('Aloqa uzildi'));
+    x.send(file);
+  });
+}
+
+$('#up').onclick = async () => {
+  const fl = [...$('#files').files];
+  if (!fl.length) return say('Avval fayl tanlang', true);
+  $('#barwrap').hidden = false;
+  let i = 0;
+  for (const f of fl) {
+    i++;
+    say('Yuklanmoqda ' + i + '/' + fl.length + ': ' + f.name);
+    try { await put(f, p => $('#bar').style.width = (p * 100) + '%'); }
+    catch (e) { say(f.name + ': ' + e.message, true); $('#barwrap').hidden = true; return; }
+  }
+  $('#barwrap').hidden = true; $('#bar').style.width = '0';
+  $('#files').value = '';
+  say('Yuklandi');
+  load();
+};
+
+if (location.hash.length > 1) { $('#code').value = decodeURIComponent(location.hash.slice(1)); enter(); }
+</script>
+</body>
+</html>
